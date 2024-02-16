@@ -8,7 +8,13 @@
  ## Purpose
  Analyze and re-evaluate findings of genes that associated with NAFLD stages. 
 
+ ## Prerequisites
+ - RStudio (version >= 3.0)
+ - Packages (available in R): BiocManager (from Bioconductor), DeSeq2, GEOquery, Random Forest and basic R packages. 
+
  ## Data
+
+ Data are from studies of Moylan et al 2014 and Adrent et al 2015. Data are acessible under GEO database, GSE89632 and GSE49541.  
 
  ## Code
 
