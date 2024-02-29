@@ -1,0 +1,159 @@
+---
+title: "DA401_NAFLD"
+format: docx
+editor: visual
+---
+
+## 
+
+# Initialization
+
+## Packages import
+
+First, we import packages and datasets
+
+```{r Import packages}
+# Install Bioconductor packages
+#if (!require("BiocManager", quietly = TRUE))
+    #install.packages("BiocManager")
+#BiocManager::install(version = "3.17")
+
+## Package to download data from acession numbers
+# BiocManager::install("Biobase")
+# BiocManager::install("GEOquery")
+library(Biobase)
+library(GEOquery)
+
+
+## Packages for DESeq2
+# Install DESeq2 package
+# BiocManager::install("DESeq2")
+library(DESeq2)
+
+
+# package for logistic regression + basic calculation
+#install.packages('glmnet')
+library(glmnet)
+library(dplyr)
+library(ggplot2)
+
+## Packages for GOSeq (pathway examination)
+#BiocManager::install("goseq")
+#BiocManager::install("clusterProfiler")
+#BiocManager::install("AnnotationDbi")
+#BiocManager::install("org.Hs.eg.db") 
+#BiocManager::install("DOSE")
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(DOSE)
+```
+
+## Data import
+
+From US
+
+Actually, may not use Moylan et al anymore.
+
+```{r Import data}
+# Dataset GSE49541 - Moylan et al., 2014
+data1 <- getGEO('GSE49541')
+
+# Dataset GSE89632 - Arendt et al., 2015
+data2 <- getGEO("GSE89632")
+```
+
+Mouse
+
+```{r}
+data_mouse <- getGEO("GSE242668")
+```
+
+US dataset
+
+```{r}
+data_u <- getGEO("GSE89632")
+```
+
+Germany dataset
+
+```{r}
+data_g <- getGEO("GSE48452")
+```
+
+France dataset
+
+```{r}
+data_f <- getGEO("GSE83452")
+```
+
+# Preprocessing 
+
+View dataset before working on it
+
+```{r View datasets}
+View(data_u)
+View(data_f)
+View(data_g)
+```
+
+Get the data out
+
+```{r Precheck}
+data_u <- data_u$GSE89632_series_matrix.txt.gz
+data_g <- data_g$GSE48452_series_matrix.txt.gz
+data_f <- data_f$GSE83452_series_matrix.txt.gz
+```
+
+## Get to know the data
+
+```{r Get to know Moylan 2014}
+# dimension of data
+dim(data1)
+
+# check for zeros expression values and/or NA, just in case
+zeros <- apply(exprs(data1), 1, function(x) sum(x==0))
+data1_1 <- data1[zeros!=72,]
+dim(data1_1)
+
+```
+
+In Moylan et al 2014 dataset, we have 72 patients with 54675 transcripts with RNA-seq values. The dataset was non-contaminated and does not have NA or 0 value.
+
+```{r Get to know Andrent 2015}
+# dimension of data
+dim(data2)
+
+# check for zeros expression values and/or NA, just in case
+zeros <- apply(exprs(data2), 1, function(x) sum(x==0))
+data2_1 <- data2[zeros!=63,]
+dim(data2_1)
+```
+
+In Andret et al 2015 dataset, we have 63 patients with 29377 transcripts with RNA-seq values. The dataset was non-contaminated and does not have NA or 0 value.
+
+## EDA
+
+Phenotype traits of patients
+
+```{r}
+p_data1
+```
+
+```{r Summary data1}
+# install.package("tableone")
+library(tableone)
+vars<-names(pData(data1))[2:107]
+table1 <- CreateTableOne(vars = vars, factorVars = vars[-2], strata = "CR", data = pData(alliance.older)) %>% print(showAllLevels=TRUE, exact = vars[-2])
+View(table1)
+# Export table1 as a csv file. Once exported, you can remove p-values that are NA due to having only one level (and therefore no test was performed)
+# write.csv(table1, "../Data/Table1.csv")
+```
+
+# Differentially expressed analysis 
+
+## Moylan et al 
+
+## Andrent et al
+
+## Compare top upregulated and downregulated genes and pathways

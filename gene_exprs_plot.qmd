@@ -1,0 +1,234 @@
+---
+title: "code_feb28"
+format: docx
+editor: visual
+---
+
+# Initialization
+
+## Packages import
+
+First, we import packages and datasets
+
+```{r}
+# Install Bioconductor packages
+#if (!require("BiocManager", quietly = TRUE))
+    #install.packages("BiocManager")
+#BiocManager::install(version = "3.17")
+
+## Package to download data from acession numbers
+# BiocManager::install("Biobase")
+# BiocManager::install("GEOquery")
+library(Biobase)
+library(GEOquery)
+
+
+## Packages for DESeq2
+# Install DESeq2 package
+# BiocManager::install("DESeq2")
+library(DESeq2)
+
+
+
+# package for logistic regression + basic calculation
+# install.packages("glmnet", repos = "http://cran.us.r-project.org")
+
+library(glmnet)
+library(dplyr)
+library(ggplot2)
+
+## Packages for GOSeq (pathway examination)
+#BiocManager::install("goseq")
+#BiocManager::install("clusterProfiler")
+#BiocManager::install("AnnotationDbi")
+#BiocManager::install("org.Hs.eg.db") 
+#BiocManager::install("DOSE")
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(DOSE)
+```
+
+## Data import
+
+US dataset, Arendt et al., 2015
+
+```{r}
+data_u <- getGEO("GSE89632") 
+data_u <- data_u$GSE89632_series_matrix.txt.gz
+```
+
+Germany dataset, Ahren et al., 2013
+
+```{r}
+data_g <- getGEO("GSE48452") 
+data_g <- data_g$GSE48452_series_matrix.txt.gz
+```
+
+US dataset, 2021
+
+```{r}
+data_u2 <- getGEO("GSE163211") 
+data_u2 <- data_u2$GSE163211_series_matrix.txt.gz
+```
+
+# Preprocessing
+
+View dataset before working on it
+
+```{r View datasets}
+View(data_u) 
+View(data_u2) 
+View(data_g)
+```
+
+## Get to know the data
+
+### USA dataset 1
+
+```{r Get to know USA data 1}
+# dimension of data
+dim(data_u)
+
+# check for zeros expression values and/or NA, just in case
+zeros <- apply(exprs(data_u), 1, function(x) sum(x==0))
+data_u <- data_u[zeros!=63,]
+dim(data_u)
+
+```
+
+### Germany 
+
+```{r Get to know Germany dataset}
+# dimension of data
+dim(data_g)
+
+# check for zeros expression values and/or NA, just in case
+zeros <- apply(exprs(data_g), 1, function(x) sum(x==0))
+data_g <- data_g[zeros!=73,]
+dim(data_g)
+```
+
+### USA dataset 2
+
+```{r Get to know USA data 2}
+# dimension of data
+dim(data_u2)
+
+# check for zeros expression values and/or NA, just in case
+zeros <- apply(exprs(data_u2), 1, function(x) sum(x==0))
+data_u2 <- data_u2[zeros!=318,]
+dim(data_u2)
+```
+
+All datasets are cleaned and do not have zero expression values.
+
+In the analysis, we will focus on gene expression values and its relationship with each other and phenotype characteristics.
+
+# Differentially expressed analysis
+
+## Andrent et al (USA data 1)
+
+### Get values for progression of NAFLD
+
+```{r}
+data_u$stages <- gsub("[^:]+: (.*)", "\\1", data_u$characteristics_ch1.1)
+data_u$stages_2 <- ifelse(data_u$stages == "HC", '0', '1')
+```
+
+### Fit DESeq2
+
+Back transform gene expression values
+
+```{r}
+# get the back-transformed data into a new variable
+data_u_expr = data_u@assayData$exprs  
+data_u_expr = round((2^data_u_expr-1),0)
+```
+
+```{r}
+# Fit DESeq2 
+dds_u <- DESeqDataSetFromMatrix(countData = data_u_expr, colData = pData(data_u), design=~stages_2)
+
+dds_u <- DESeq(dds_u)
+```
+
+```{r}
+# get the result and summary
+head(dds_u)
+dds.results_u <- results(dds_u, contrast = c('stages_2', "0", "1"))
+summary(dds.results_u, alpha = 0.05) # p-value = 0.05
+```
+
+```{r}
+# Only get differential expressed genes (p-val <= 0.05)
+dds.results_u.df <- dds.results_u[dds.results_u$padj <= 0.05,]
+head(dds.results_u.df)
+```
+
+Plot
+
+```{r}
+plot(dds.results_u$log2FoldChange, -log10(dds.results_u$padj), col = c("gray","black", "blue")[(dds.results_u$padj < 0.05 & abs(dds.results_u$log2FoldChange) > 2) + 1 ], xlab = expression(log2(FoldChange)), ylab = "-log10(p-value)", cex = 0.8, pch = 14)
+abline(v = c(-2, 2), col = "green")
+```
+
+## GOSeq Analysis (still working on)
+
+We want to find which molecular function pathway associated with those differentially expressed genes.
+
+```{r}
+# FDR <= 0.05 and foldchange outside abs 2
+sigs_FC_u <- dds.results_u[!is.na(dds.results_u$padj) & dds.results_u$padj <= 0.05 & dds.results_u$log2FoldChange > 2 | dds.results_u$log2FoldChange < -2 ,]
+genes_sigs_FC_u <- rownames(sigs_FC_u)
+```
+
+```{r}
+# run goseq, find molecular function pathways
+GO_results_sigs_u <- enrichGO(gene = genes_sigs_FC_u, OrgDb = "org.Hs.eg.db",  keyType = "ENSEMBL", ont = "MF")
+
+# check results
+dfGO_sigs <- data.frame(GO_results_sigs_u@result) # transform the result file to dataframe
+head(dfGO_sigs)
+```
+
+## Germany (similar to above)
+
+```{r}
+data_g$source_name_ch1
+```
+
+### Fit DESeq2
+
+Back transform gene expression values
+
+```{r}
+# get the back-transformed data into a new variable
+data_g_expr = data_g@assayData$exprs  
+data_g_expr = round((2^data_g_expr-1),0)
+data_g_expr = na.omit(data_g_expr)
+```
+
+```{r}
+# Fit DESeq2 
+dds_g <- DESeqDataSetFromMatrix(data_g_expr, colData = pData(data_g), design=~source_name_ch1)
+dds_g <- DESeq(dds_g)
+```
+
+```{r}
+# get the result and summary
+head(dds_g)
+
+# get the comparison between healthy and nash 
+dds.results_g <- results(dds_g, contrast = c('source_name_ch1', "Healthy obese", "Nash"))
+
+dds.results_g <- 
+summary(dds.results_g, alpha = 0.05) # p-value = 0.05
+```
+
+```{r}
+dds.results_g <- na.omit(dds.results_g)
+# Only get differential expressed genes (p-val <= 0.05)
+dds.results_g.df <- dds.results_g[dds.results_g$padj <= 0.05,]
+head(dds.results_g.df)
+```
