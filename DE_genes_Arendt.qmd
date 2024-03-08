@@ -1,0 +1,273 @@
+---
+title: "code_feb28"
+format: docx
+editor: visual
+---
+
+# Initialization
+
+## Packages import
+
+First, we import packages and datasets
+
+```{r}
+# Install Bioconductor packages
+#if (!require("BiocManager", quietly = TRUE))
+    #install.packages("BiocManager")
+#BiocManager::install(version = "3.17")
+
+## Package to download data from acession numbers
+# BiocManager::install("Biobase")
+# BiocManager::install("GEOquery")
+library(Biobase)
+library(GEOquery)
+
+
+## Packages for DESeq2
+# Install DESeq2 package
+# BiocManager::install("DESeq2")
+library(DESeq2)
+
+
+
+# package for logistic regression + basic calculation
+# install.packages("glmnet", repos = "http://cran.us.r-project.org")
+
+library(glmnet)
+library(dplyr)
+library(ggplot2)
+
+## Packages for GOSeq (pathway examination)
+#BiocManager::install("goseq")
+#BiocManager::install("clusterProfiler")
+#BiocManager::install("AnnotationDbi")
+#BiocManager::install("org.Hs.eg.db") 
+#BiocManager::install("DOSE")
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(DOSE)
+
+#BiocManager::install("illuminaHumanv4.db")
+library("illuminaHumanv4.db")
+
+```
+
+## Data import
+
+```{r}
+#US_1 - Arendt et al., 2015
+data_u <- getGEO("GSE89632") 
+data_u <- data_u$GSE89632_series_matrix.txt.gz
+
+#US_2
+data_u2 <- getGEO("GSE163211") 
+data_u2 <- data_u2$GSE163211_series_matrix.txt.gz
+```
+
+# Preprocessing
+
+## Get to know the data
+
+### 
+
+```{r}
+#US_1
+# dimension of data
+dim(data_u)
+
+# check for zeros expression values and/or NA, just in case
+zeros <- apply(exprs(data_u), 1, function(x) sum(x==0))
+data_u <- data_u[zeros!=63,]
+dim(data_u)
+
+#Germany 
+# dimension of data
+dim(data_g)
+
+# check for zeros expression values and/or NA, just in case
+zeros <- apply(exprs(data_g), 1, function(x) sum(x==0))
+data_g <- data_g[zeros!=73,]
+dim(data_g)
+
+
+#US_2
+# dimension of data
+dim(data_u2)
+
+# check for zeros expression values and/or NA, just in case
+zeros <- apply(exprs(data_u2), 1, function(x) sum(x==0))
+data_u2 <- data_u2[zeros!=318,]
+dim(data_u2)
+```
+
+All datasets are cleaned and do not have zero expression values.
+
+In the analysis, we will focus on gene expression values and its relationship with each other and phenotype characteristics.
+
+# Differentially expressed analysis
+
+## Andrent et al (USA data 1)
+
+### Get values for progression of NAFLD
+
+```{r}
+# Values for diabetes 
+data_uu <- data_u[, !is.na(data_u@phenoData@data[["characteristics_ch1.22"]]) & data_u@phenoData@data[["characteristics_ch1.22"]] == "diabetes: yes" | data_u@phenoData@data[["characteristics_ch1.22"]] == "diabetes: no" ] 
+
+data_uu$diabetes <- ifelse(data_uu@phenoData@data[["characteristics_ch1.22"]] == "diabetes: no", '0', '1')
+
+```
+
+```{r}
+# Values for progression of NAFLD 
+data_uu$stages <- gsub("[^:]+: (.*)", "\\1", data_uu$characteristics_ch1.1)
+
+data_uu$stages <- ifelse(data_uu$stages == 'HC', 1,
+                 ifelse(data_uu$stages == 'NASH', 2,
+                        ifelse(data_uu$stages == 'SS', 3, data_uu$stages)))
+
+
+  
+
+# get the back-transformed data into a new variable
+data_u_expr = data_uu@assayData$exprs  
+data_u_expr = round((2^data_u_expr-1),0)
+```
+
+```{r}
+# Fit DESeq2 
+dds_u <- DESeqDataSetFromMatrix(countData = data_u_expr, colData = pData(data_uu), design=~stages+diabetes)
+
+dds_u <- DESeq(dds_u)
+```
+
+## Compare healthy vs simple steatosis
+
+```{r}
+# get the result and summary
+head(dds_u)
+dds.results_u <- results(dds_u, contrast = c('stages', "1", "2"))  
+summary(dds.results_u, alpha = 0.05) # p-value = 0.05
+
+# Only get differential expressed genes (p-val <= 0.05 and log2FC outside of [-2,2])
+dds.results_u.h_ss <- dds.results_u[!is.na(dds.results_u$padj) & dds.results_u$padj <= 0.05 & dds.results_u$log2FoldChange > 2 | dds.results_u$log2FoldChange < -2 ,]
+
+head(dds.results_u.h_ss)
+```
+
+Number of upregulated and downregulated transcripts
+
+```{r}
+#upregulated
+sum(dds.results_u.h_ss$log2FoldChange > 0)
+
+#downregulated
+sum(dds.results_u.h_ss$log2FoldChange < 0)
+```
+
+Plot - Healthy versus SS
+
+```{r}
+plot(dds.results_u$log2FoldChange, -log10(dds.results_u$padj), col = c("gray","pink4", "blue")[(dds.results_u$padj < 0.05 & abs(dds.results_u$log2FoldChange) > 2) + 1 ], xlab = expression(log2(FoldChange)), ylab = "-log10(p-value)", cex = 0.8, pch = 20)
+abline(v = c(-2, 2), col = "green")
+abline(h = -log10(0.05), col = "green")
+```
+
+### Compare healthy versus NASH
+
+```{r}
+# get the result and summary
+head(dds_u)
+dds.results_u_h_nash <- results(dds_u, contrast = c('stages', "1", "3"))  
+summary(dds.results_u_h_nash, alpha = 0.05) # p-value = 0.05
+
+# Only get differential expressed genes (p-val <= 0.05 and log2FC outside of [-2,2])
+dds.results_u.h_nash <- dds.results_u[!is.na(dds.results_u_h_nash$padj) & dds.results_u_h_nash$padj <= 0.05 & dds.results_u_h_nash$log2FoldChange > 2 | dds.results_u_h_nash$log2FoldChange < -2 ,]
+
+head(dds.results_u.h_nash)
+```
+
+```{r}
+#upregulated
+sum(dds.results_u.h_nash$log2FoldChange > 0)
+
+#downregulated
+sum(dds.results_u.h_nash$log2FoldChange < 0)
+```
+
+Plot healthy versus NASH
+
+```{r}
+plot(dds.results_u_h_nash$log2FoldChange, -log10(dds.results_u_h_nash$padj), col = c("gray","red", "blue")[(dds.results_u_h_nash$padj < 0.05 & abs(dds.results_u_h_nash$log2FoldChange) > 2) + 1 ], xlab = expression(log2(FoldChange)), ylab = "-log10(p-value)", cex = 0.8, pch = 20)
+abline(v = c(-2, 2), col = "green")
+abline(h = -log10(0.05), col = "green")
+```
+
+## Gene Identification Analysis (still working on)
+
+We want to find which molecular function pathway associated with those differentially expressed genes.
+
+#### 1. Healthy versus SS
+
+```{r}
+# FDR <= 0.05 and foldchange outside abs 2
+sigs_FC_u <- dds.results_u[!is.na(dds.results_u$padj) & dds.results_u$padj < 0.05 &( dds.results_u$log2FoldChange > 2 | dds.results_u$log2FoldChange < -2) ,]
+genes_sigs_FC_u <- rownames(sigs_FC_u)
+
+
+# Gene identification
+data.frame(Gene=unlist(mget(x = genes_sigs_FC_u,envir = illuminaHumanv4SYMBOL)))
+```
+
+#### 2. Healthy versus NASH
+
+```{r}
+# FDR <= 0.05 and foldchange outside abs 2
+sigs_FC_u_h_nash <- dds.results_u[!is.na(dds.results_u_h_nash$padj) & dds.results_u_h_nash$padj <= 0.05 &( dds.results_u_h_nash$log2FoldChange > 2 | dds.results_u_h_nash$log2FoldChange < -2) ,]
+genes_sigs_FC_u_h_nash <- rownames(sigs_FC_u_h_nash)
+
+
+# Gene identification
+data.frame(Gene=unlist(mget(x = genes_sigs_FC_u_h_nash,envir = illuminaHumanv4SYMBOL)))
+```
+
+Similar genes between these two analyses
+
+```{r}
+h_ss_h_nash <- intersect(unlist(mget(x = genes_sigs_FC_u_h_nash,envir = illuminaHumanv4SYMBOL)), unlist(mget(x = genes_sigs_FC_u,envir = illuminaHumanv4SYMBOL)))
+```
+
+Molecular function pathway
+
+```{r}
+# run goseq, find molecular function pathways
+GO_results_sigs <- enrichGO(gene = h_ss_h_nash, OrgDb = "org.Hs.eg.db",  keyType = "SYMBOL", ont = "MF")
+
+# check results
+dfGO_sigs <- data.frame(GO_results_sigs@result) # transform the result file to dataframe
+head(dfGO_sigs)
+```
+
+## For US 2
+
+```{r}
+# data_u2_design <- data_u2@phenoData$`nafld stage:ch1`
+```
+
+For diabetes
+
+```{r}
+# Values for diabetes 
+data_u2u <- data_u2[, !is.na(data_u2@phenoData@data[["characteristics_ch1.5"]]) & data_u2@phenoData@data[["characteristics_ch1.5"]] == "diabetes: Yes" | data_u2@phenoData@data[["characteristics_ch1.5"]] == "diabetes: No" ] 
+
+data_u2u$diabetes <- ifelse(data_u2u@phenoData@data[["characteristics_ch1.5"]] == "diabetes: No", '0', '1')
+```
+
+We would not need back transform for this dataset since it has raw counts already
+
+```{r}
+# Fit DESeq2 
+#dds_u2 <- DESeqDataSetFromMatrix(round(exprs(data_u2)), colData = pData(data_u2), design=~data_u2_design)
+#dds_u2 <- DESeq(dds_u2)
+```
