@@ -32,8 +32,11 @@ The overarching research question guiding this study is to provide a meta-analys
 ### 2. Gene expression analysis
 - DESeq2 package in R for differentially gene expression analysis, with the condition of NAFLD stages (healthy, simple steatosis and NASH) and diabetes status (have or do not have diabetes)
 - Threshold for differentially expressed genes is False Discovery Rate of 5% and log2FoldChange > 2 or <-2
-- Identify gene symbol using illuminaHumanv4ACCNUM and molecular function pathway using enrichGO
+- Identify gene symbol using illuminaHumanv4ACCNUM 
+- Molecular function pathway identification by enrichGO and GOplot
  
 
  ## Conclusions 
-Will be updated soon. 
+More than 150 differentially expressed genes were identified, along with molecular pathways associated with them, such as DNA-, miRNA-binding transcription factors, serine hydrolase activity, and insulin-like growth factors, which some of them were also found in initial studies and some were novel. These pathways also verified to be consistent with independent studies in their roles with disease progression. 
+
+These data provide insights and biomarkers into the dynamic pathogenesis of NAFLD in high-risk individuals with inclusive data and analysis.
