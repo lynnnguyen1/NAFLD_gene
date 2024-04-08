@@ -1,0 +1,603 @@
+---
+title: "code_feb28"
+format: docx
+editor: visual
+---
+
+# Initialization
+
+## Packages import
+
+First, we import packages and datasets
+
+```{r}
+# Install Bioconductor packages
+#if (!require("BiocManager", quietly = TRUE))
+    #install.packages("BiocManager")
+#BiocManager::install(version = "3.17")
+
+## Package to download data from acession numbers
+# BiocManager::install("Biobase")
+# BiocManager::install("GEOquery")
+library(Biobase)
+library(GEOquery)
+
+
+## Packages for DESeq2
+# Install DESeq2 package
+# BiocManager::install("DESeq2")
+library(DESeq2)
+
+
+
+# package for logistic regression + basic calculation
+# install.packages("glmnet", repos = "http://cran.us.r-project.org")
+
+library(glmnet)
+library(dplyr)
+library(ggplot2)
+
+## Packages for GOSeq (pathway examination)
+#BiocManager::install("goseq")
+#BiocManager::install("clusterProfiler")
+#BiocManager::install("AnnotationDbi")
+#BiocManager::install("org.Hs.eg.db") 
+#BiocManager::install("DOSE")
+# BiocManager::install("hgu133a.db")
+library(fgsea)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(DOSE)
+library(hgu133a.db)
+
+#install.packages('GOplot')
+library(GOplot)
+#BiocManager::install("illuminaHumanv4.db")
+library("illuminaHumanv4.db")
+
+```
+
+## Data import
+
+```{r}
+#US_1 - Arendt et al., 2015
+data_u <- getGEO("GSE89632") 
+data_u <- data_u$GSE89632_series_matrix.txt.gz
+
+
+#US_2
+data_u2 <- getGEO("GSE163211") 
+data_u2 <- data_u2$GSE163211_series_matrix.txt.gz
+```
+
+# Preprocessing
+
+## Get to know the data
+
+### 
+
+```{r}
+#US_1
+# dimension of data
+dim(data_u)
+
+# check for zeros expression values and/or NA, just in case
+zeros <- apply(exprs(data_u), 1, function(x) sum(x==0))
+data_u <- data_u[zeros!=63,]
+dim(data_u)
+
+
+#US_2
+# dimension of data
+dim(data_u2)
+
+# check for zeros expression values and/or NA, just in case
+zeros <- apply(exprs(data_u2), 1, function(x) sum(x==0))
+data_u2 <- data_u2[zeros!=318,]
+dim(data_u2)
+```
+
+All datasets are cleaned and do not have zero expression values.
+
+In the analysis, we will focus on gene expression values and its relationship with each other and phenotype characteristics.
+
+### 
+
+# Andrent et al (USA data 1)
+
+## Differentially expressed analysis
+
+### Get values for progression of NAFLD
+
+```{r}
+# Values for diabetes 
+data_uu <- data_u[, !is.na(data_u@phenoData@data[["characteristics_ch1.22"]]) & data_u@phenoData@data[["characteristics_ch1.22"]] == "diabetes: yes" | data_u@phenoData@data[["characteristics_ch1.22"]] == "diabetes: no" ] 
+
+data_uu$diabetes <- ifelse(data_uu@phenoData@data[["characteristics_ch1.22"]] == "diabetes: no", '0', '1')
+
+```
+
+```{r}
+# Values for progression of NAFLD 
+data_uu$stages <- gsub("[^:]+: (.*)", "\\1", data_uu$characteristics_ch1.1)
+
+data_uu$stages <- ifelse(data_uu$stages == 'HC', 1,
+                 ifelse(data_uu$stages == 'NASH', 2,
+                        ifelse(data_uu$stages == 'SS', 3, data_uu$stages)))
+
+
+  
+
+# get the back-transformed data into a new variable
+data_u_expr = data_uu@assayData$exprs  
+data_u_expr = round((2^data_u_expr-1),0)
+```
+
+```{r}
+# Fit DESeq2 
+dds_u <- DESeqDataSetFromMatrix(countData = data_u_expr, colData = pData(data_uu), design=~stages+diabetes)
+
+dds_u <- DESeq(dds_u)
+```
+
+Plot dispersal
+
+```{r}
+plotDispEsts(dds_u)
+```
+
+MA plot
+
+```{r}
+resApeT <- lfcShrink(dds_u, coef=2, type="apeglm", lfcThreshold=1)
+plotMA(resApeT, ylim=c(-3,3), cex=.8)
+abline(h=c(-1,1), col="dodgerblue", lwd=2)
+```
+
+## Compare healthy vs simple steatosis
+
+```{r}
+# get the result and summary
+head(dds_u)
+dds.results_u <- results(dds_u, contrast = c('stages', "2", "1"))  
+summary(dds.results_u, alpha = 0.05) # p-value = 0.05
+
+# Only get differential expressed genes (p-val <= 0.05 and log2FC outside of [-2,2])
+dds.results_u.h_ss <- dds.results_u[!is.na(dds.results_u$padj) & dds.results_u$padj <= 0.05 & dds.results_u$log2FoldChange > 2 | dds.results_u$log2FoldChange < -2 ,]
+
+head(dds.results_u.h_ss)
+
+# Overview of result
+#upregulated
+sum(dds.results_u.h_ss$log2FoldChange > 0)
+
+#downregulated
+sum(dds.results_u.h_ss$log2FoldChange < 0)
+
+
+# Plot
+
+plot(dds.results_u$log2FoldChange, -log10(dds.results_u$padj), col = c("gray","pink4", "blue")[(dds.results_u$padj < 0.05 & abs(dds.results_u$log2FoldChange) > 2) + 1 ],  xlab = "Changes of gene expression from Healthy to SS", ylab = "Significant level, FDR", cex = 0.8, pch = 20)
+title("GSE89632 - Healthy versus SS")
+abline(v = c(-2, 2), col = "green")
+abline(h = -log10(0.05), col = "green")
+```
+
+### Compare healthy versus NASH
+
+```{r}
+# get the result and summary
+head(dds_u)
+dds.results_u_h_nash <- results(dds_u, contrast = c('stages', "3", "1"))  
+summary(dds.results_u_h_nash, alpha = 0.05) # p-value = 0.05
+
+# Only get differential expressed genes (p-val <= 0.05 and log2FC outside of [-2,2])
+dds.results_u.h_nash <- dds.results_u[!is.na(dds.results_u_h_nash$padj) & dds.results_u_h_nash$padj <= 0.05 & dds.results_u_h_nash$log2FoldChange > 2 | dds.results_u_h_nash$log2FoldChange < -2 ,]
+
+# Overview of the result
+#upregulated
+sum(dds.results_u.h_nash$log2FoldChange > 0)
+
+#downregulated
+sum(dds.results_u.h_nash$log2FoldChange < 0)
+
+# Plot
+plot(dds.results_u_h_nash$log2FoldChange, -log10(dds.results_u_h_nash$padj), col = c("gray","pink4", "blue")[(dds.results_u_h_nash$padj < 0.05 & abs(dds.results_u_h_nash$log2FoldChange) > 2) + 1 ], xlab = "Changes of gene expression from Healthy to NASH", ylab = "Significant level, FDR", cex = 0.8, pch = 20)
+title("GSE89632 - Healthy versus NASH")
+abline(v = c(-2, 2), col = "green")
+abline(h = -log10(0.05), col = "green")
+
+```
+
+### Compare SS versus NASH
+
+```{r}
+# get the result and summary of SS and NASH
+dds.results_u_ss_nash <- results(dds_u, contrast = c('stages', "3", "2"))  
+
+# Only get differential expressed genes (p-val <= 0.05 and log2FC outside of [-2,2])
+dds.results_u.ss_nash <- dds.results_u[!is.na(dds.results_u_ss_nash$padj) & dds.results_u_ss_nash$padj <= 0.05 & dds.results_u_ss_nash$log2FoldChange > 2 | dds.results_u_ss_nash$log2FoldChange < -2 ,]
+
+# Overview of the result
+#upregulated
+sum(dds.results_u.ss_nash$log2FoldChange > 0)
+
+#downregulated
+sum(dds.results_u.ss_nash$log2FoldChange < 0)
+
+# Plot
+plot(dds.results_u_ss_nash$log2FoldChange, -log10(dds.results_u_ss_nash$padj), col = c("gray","pink4", "blue")[(dds.results_u_ss_nash$padj < 0.05 & abs(dds.results_u_ss_nash$log2FoldChange) > 2) + 1 ], xlab = "Changes of gene expression from SS to NASH", ylab = "Significant level, FDR", cex = 0.8, pch = 20)
+title("GSE89632 - SS versus NASH")
+abline(v = c(-2, 2), col = "green")
+abline(h = -log10(0.05), col = "green")
+```
+
+We have 2 upregulated and 2 downregulated genes that are differentially expressed in this sub-analysis.
+
+## Gene Identification Analysis
+
+We want to find which molecular function pathway associated with those differentially expressed genes.
+
+#### 1. Healthy versus SS
+
+```{r}
+# FDR <= 0.05 and foldchange outside abs 2
+sigs_FC_u <- dds.results_u[!is.na(dds.results_u$padj) & dds.results_u$padj < 0.05 &( dds.results_u$log2FoldChange > 2 | dds.results_u$log2FoldChange < -2) ,]
+
+sigs_FC_u$log2FoldChange < 0 
+genes_sigs_FC_u <- rownames(sigs_FC_u)
+
+
+# Gene identification
+genes_h_ss_1 <- data.frame(Gene=unlist(mget(x = genes_sigs_FC_u,envir = illuminaHumanv4SYMBOL)))
+
+go_h_ss_1 <- enrichGO(gene = genes_h_ss_1$Gene, OrgDb = "org.Hs.eg.db",  keyType = "SYMBOL", ont = "MF")
+
+# export the supplemental table A1
+write.csv(go_h_ss_1@result,"C:\\Users\\nklin\\Downloads\\spring 24\\DA 401\\table_A1_1_h_ss.csv", row.names = FALSE) 
+
+```
+
+```{r}
+goplot(go_h_ss_1)
+```
+
+```{r}
+cnetplot(go_h_ss_1, showCategory = 12)
+```
+
+Bind gene names and log2fc
+
+```{r}
+h_ss_1_genes <- merge(data.frame(dds.results_u), genes_h_ss_1, by = 0)
+
+# export the supplemental table A.1.2
+write.csv(h_ss_1_genes,"C:\\Users\\nklin\\Downloads\\spring 24\\DA 401\\table_A1_1_2_h_ss.csv", row.names = FALSE) 
+```
+
+#### 2. Healthy versus NASH
+
+```{r}
+# FDR <= 0.05 and foldchange outside abs 2
+sigs_FC_u_h_nash <- dds.results_u_h_nash[!is.na(dds.results_u_h_nash$padj) & dds.results_u_h_nash$padj <= 0.05 &( dds.results_u_h_nash$log2FoldChange > 2 | dds.results_u_h_nash$log2FoldChange < -2) ,]
+genes_sigs_FC_u_h_nash <- rownames(sigs_FC_u_h_nash)
+
+
+# Gene identification
+genes_h_nash_1 <- data.frame(Gene=unlist(mget(x = genes_sigs_FC_u_h_nash,envir = illuminaHumanv4SYMBOL)))
+
+```
+
+```{r}
+
+# Gene identification
+
+go_h_nash_1 <- enrichGO(gene = genes_h_nash_1$Gene, OrgDb = "org.Hs.eg.db",  keyType = "SYMBOL", ont = "MF")
+
+cnetplot(go_h_nash_1, showCategory = 12)
+```
+
+Export table A2
+
+```{r}
+write.csv(go_h_nash_1@result,"C:\\Users\\nklin\\Downloads\\spring 24\\DA 401\\table_A2_1_h_nash.csv", row.names = FALSE) 
+```
+
+```{r}
+h_nash_1_genes <- merge(data.frame(sigs_FC_u_h_nash), genes_h_nash_1, by = 0)
+
+# export the supplemental table A.1.2
+write.csv(h_nash_1_genes,"C:\\Users\\nklin\\Downloads\\spring 24\\DA 401\\table_A1_1_2_h_nash.csv", row.names = FALSE) 
+```
+
+#### 3. SS vs NASH
+
+```{r}
+# FDR <= 0.05 and foldchange outside abs 2
+sigs_FC_u_ss_nash <- dds.results_u_ss_nash[!is.na(dds.results_u_ss_nash$padj) & dds.results_u_ss_nash$padj < 0.05 &( dds.results_u_ss_nash$log2FoldChange > 2 | dds.results_u_ss_nash$log2FoldChange < -2) ,]
+genes_sigs_FC_u_ss_nash <- rownames(sigs_FC_u_ss_nash)
+
+
+# Gene identification
+genes_ss_nash_1 <- data.frame(Gene=unlist(mget(x = genes_sigs_FC_u_ss_nash,envir = illuminaHumanv4SYMBOL)))
+
+```
+
+```{r}
+# Gene identification
+
+go_ss_nash_1 <- enrichGO(gene = genes_ss_nash_1$Gene, OrgDb = "org.Hs.eg.db",  keyType = "SYMBOL", ont = "MF")
+
+cnetplot(go_ss_nash_1, showCategory = 12)
+```
+
+```{r}
+ss_nash_1_genes <- merge(data.frame(sigs_FC_u_ss_nash), genes_ss_nash_1, by = 0)
+
+# export the supplemental table A.1.2
+write.csv(h_nash_1_genes,"C:\\Users\\nklin\\Downloads\\spring 24\\DA 401\\table_A1_1_2_h_nash.csv", row.names = FALSE) 
+```
+
+#### 4. Similar genes between these analyses for this dataset
+
+```{r}
+sigs_h_nafld <- intersect(genes_sigs_FC_u_h_nash, genes_sigs_FC_u)
+sigs_h_nafld_0 <- rbind(sigs_FC_u[row.names(sigs_FC_u) %in% sigs_h_nafld, ], sigs_FC_u_h_nash[row.names(sigs_FC_u_h_nash) %in% sigs_h_nafld, ] )
+
+genes_h_nafld <- data.frame(Gene=unlist(mget(x = unique(rownames(sigs_h_nafld_0)),envir = illuminaHumanv4SYMBOL)))
+genes_h_nafld <- as.data.frame(na.omit(genes_h_nafld))
+
+
+genes_h_nafld_1 <- merge(as.data.frame(sigs_FC_u[row.names(sigs_FC_u) %in% sigs_h_nafld, ]), genes_h_nafld, by = "row.names")
+
+genes_h_nafld_2 <- merge(as.data.frame(sigs_FC_u_h_nash[row.names(sigs_FC_u_h_nash) %in% sigs_h_nafld, ]), genes_h_nafld, by = "row.names")
+
+genes_h_nafld_all <- rbind(genes_h_nafld_1, genes_h_nafld_2)
+```
+
+Molecular function pathway of these similar genes
+
+```{r}
+# run goseq, find molecular function pathways
+GO_results_sigs <- enrichGO(gene = unique(genes_h_nafld$Gene), OrgDb = "org.Hs.eg.db",  keyType = "SYMBOL", ont = "MF")
+
+# check results
+dfGO_sigs <- data.frame(GO_results_sigs@result) # transform the result file to dataframe
+head(dfGO_sigs)
+```
+
+Draw the plot
+
+```{r}
+goplot(GO_results_sigs, geom = 'label')
+```
+
+```{r}
+dotplot(GO_results_sigs, showCategory = 20) + ggtitle("NAFLD stages vs Healthy")
+```
+
+```{r}
+cnetplot(GO_results_sigs, showCategory = 12)
+```
+
+## 
+
+# Subudhi et al
+
+## 1. Get data to analyze
+
+```{r}
+# Values for diabetes 
+data_u2u <- data_u2[, !is.na(data_u2@phenoData@data[["characteristics_ch1.5"]]) & data_u2@phenoData@data[["characteristics_ch1.5"]] == "diabetes: Yes" | data_u2@phenoData@data[["characteristics_ch1.5"]] == "diabetes: No" ] 
+
+data_u2u$diabetes <- ifelse(data_u2u@phenoData@data[["characteristics_ch1.5"]] == "diabetes: No", 0, 1)
+```
+
+We still also have to back transform the expression values of this dataset - but the method is different compared to the previous one. We will also re-code values in the stage column for easy interpretation
+
+backtransform the expression values
+
+```{r}
+exprs_data_u2 <- round(data_u2u@assayData$exprs,0)
+```
+
+```{r}
+data_u2u$stages <- ifelse(data_u2u$`nafld stage:ch1` == "Normal", '1',
+                          ifelse(data_u2u$`nafld stage:ch1` == "Steatosis", '2', '3'))
+```
+
+## 2. Fit DeSEQ2
+
+```{r}
+# Fit DESeq2 
+dds_u2 <- DESeqDataSetFromMatrix(countData = exprs_data_u2, colData = pData(data_u2u), design=~stages+diabetes)
+
+dds_u2 <- DESeq(dds_u2)
+```
+
+## Healthy vs ss
+
+```{r}
+# head(dds_u2)
+
+
+# normal vs ss
+dds.results_u2_h_ss <- results(dds_u2, contrast = c('stages', '2', '1'))  
+summary(dds.results_u2_h_ss, alpha = 0.05) # p-value = 0.05
+
+# Only get differential expressed genes (p-val <= 0.05) - we did not consider log2FC, though
+dds_u2_h_ss <- dds.results_u2_h_ss[!is.na(dds.results_u2_h_ss$padj) & dds.results_u2_h_ss$padj <= 0.05 & dds.results_u2_h_ss$log2FoldChange > .5 | dds.results_u2_h_ss$log2FoldChange < -.5 ,]
+
+
+head(dds_u2_h_ss)
+
+# Overview of result
+#upregulated
+sum(dds_u2_h_ss$log2FoldChange > 0)
+
+#downregulated
+sum(dds_u2_h_ss$log2FoldChange < 0)
+
+
+# Plot
+
+plot(dds.results_u2_h_ss$log2FoldChange, -log10(dds.results_u2_h_ss$padj), col = c("gray","red", "blue")[(dds.results_u2_h_ss$padj < 0.05 & abs(dds.results_u2_h_ss$log2FoldChange) > 0.5) + 1 ], xlab = "Changes of gene expression from Healthy to SS", ylab = "Significant level, FDR", cex = 0.8, pch = 20)
+title("GSE163211 - Healthy versus SS")
+abline(v = c(-0.5, .5), col = "green")
+abline(h = -log10(0.05), col = "green")
+
+```
+
+## Healthy vs nash
+
+```{r}
+# normal vs ss
+dds.results_u2_h_nash <- results(dds_u2, contrast = c('stages', '3', '1'))  
+summary(dds.results_u2_h_nash, alpha = 0.05) # p-value = 0.05
+
+# Only get differential expressed genes (p-val <= 0.05) - we did not consider log2FC, though
+dds_u2_h_nash <- dds.results_u2_h_nash[!is.na(dds.results_u2_h_nash$padj) & dds.results_u2_h_nash$padj <= 0.05 & dds.results_u2_h_nash$log2FoldChange > .5 | dds.results_u2_h_nash$log2FoldChange < -.5 ,]
+
+head(dds_u2_h_ss)
+
+# Overview of result
+#upregulated
+sum(dds_u2_h_nash$log2FoldChange > 0)
+
+#downregulated
+sum(dds_u2_h_nash$log2FoldChange < 0)
+
+
+# Plot
+
+plot(dds.results_u2_h_nash$log2FoldChange, -log10(dds.results_u2_h_nash$padj), col = c("gray","red", "blue")[(dds.results_u2_h_nash$padj < 0.05 & abs(dds.results_u2_h_nash$log2FoldChange) > 0.5) + 1 ], xlab = "Changes of gene expression from Healthy to NASH", ylab = "Significant level, FDR", cex = 0.8, pch = 20)
+abline(v = c(-0.5, .5), col = "green")
+abline(h = -log10(0.05), col = "green")
+title("GSE163211 - NASH vs Healthy")
+
+```
+
+## SS vs NASH
+
+```{r}
+# ss vs nash
+dds.results_u2_ss_nash <- results(dds_u2, contrast = c('stages', '3', '2'))  
+summary(dds.results_u2_ss_nash, alpha = 0.05) # p-value = 0.05
+
+# Only get differential expressed genes (p-val <= 0.05) - we did not consider log2FC, though
+dds_u2_ss_nash <- dds.results_u2_ss_nash[!is.na(dds.results_u2_ss_nash$padj) & dds.results_u2_ss_nash$padj <= 0.05 & dds.results_u2_ss_nash$log2FoldChange > .5 | dds.results_u2_ss_nash$log2FoldChange < -.5  ,]
+
+head(dds_u2_ss_nash)
+
+# Overview of result
+#upregulated
+sum(dds_u2_ss_nash$log2FoldChange > 0)
+
+#downregulated
+sum(dds_u2_ss_nash$log2FoldChange < 0)
+
+
+# Plot
+
+plot(dds.results_u2_ss_nash$log2FoldChange, -log10(dds.results_u2_ss_nash$padj), col = c("gray","red", "blue")[(dds.results_u2_ss_nash$padj < 0.05 & abs(dds.results_u2_ss_nash$log2FoldChange) > 0.5) + 1 ], xlab = "Changes of gene expression from SS to NASH", ylab = "Significant level, FDR", cex = 0.8, pch = 20)
+abline(v = c(0.5), col = "green")
+abline(h = -log10(0.05), col = "green")
+title("GSE163211 - SS vs NASH")
+
+
+```
+
+## 2. Comparison
+
+```{r}
+sigs_h_nafld_2 <- intersect(rownames(dds_u2_h_ss), rownames(dds_u2_h_nash))
+sigs_h_nafld_2 <- rbind(dds.results_u2_h_ss[row.names(dds.results_u2_h_ss) %in% sigs_h_nafld_2, ],
+                        dds.results_u2_h_nash[row.names(dds.results_u2_h_nash) %in% sigs_h_nafld_2, ] )
+
+genes_h_nafld <- data.frame(Gene=unlist(mget(x = unique(rownames(sigs_h_nafld)),envir = illuminaHumanv4SYMBOL)))
+```
+
+### 2.4 All genes together
+
+```{r}
+deg_sum <- data.frame(
+  category = c("Healthy vs Steatosis", "Healthy vs NASH", "Steatosis vs NASH", "Healthy vs NAFLD stages"),
+  count = c(4, 11, 10, 0),
+  upreg = c(sum(dds_u2_h_ss$log2FoldChange > 0 ), sum(dds_u2_h_nash$log2FoldChange > 0), sum(dds_u2_ss_nash$log2FoldChange >0), 0 ),
+  downreg = c(sum(dds_u2_h_ss$log2FoldChange < 0 ), sum(dds_u2_h_nash$log2FoldChange  < 0), sum(dds_u2_ss_nash$log2FoldChange <0), 0 )
+  )
+
+library(tidyr)
+df_long <- pivot_longer(deg_sum, cols = c(downreg,upreg), names_to = "genes", values_to = "value")
+
+# Create stacked bar chart
+ggplot(df_long, aes(x = category, y = value, fill = genes)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Number of significantly differentially expressed genes - GSE163211",
+       x = NULL,
+       y = "Number of genes") +
+  theme_minimal()
+  geom_text(aes(label = value),           
+            color = "black", size =4)             
+```
+
+## 3. Gene identification
+
+For Healthy and SS
+
+cluster of genes
+
+```{r}
+mf_u2_h_ss <- enrichGO(gene  = rownames(dds_u2_h_ss), keyType = 'SYMBOL', OrgDb = org.Hs.eg.db, ont = "MF")
+
+# check results
+mf_u2_h_ss.df <- data.frame(mf_u2_h_ss@result) # transform the result file to dataframe
+head(mf_u2_h_ss.df)
+
+cnetplot(mf_u2_h_ss,showCategory=10)
+```
+
+```{r}
+h_ss_2_genes <- merge(data.frame(dds_u2_h_ss), mf_u2_h_ss, by = 0)
+
+# export the supplemental table A.1.2
+write.csv(h_ss_1_genes,"C:\\Users\\nklin\\Downloads\\spring 24\\DA 401\\table_A1_1_2_h_ss.csv", row.names = FALSE) 
+```
+
+From healthy to nash
+
+```{r}
+
+mf_u2_h_nash <- enrichGO(gene  = rownames(dds_u2_h_nash), keyType = 'SYMBOL', OrgDb = org.Hs.eg.db, ont = "MF")
+
+# check results
+mf_u2_h_nash.df <- data.frame(mf_u2_h_nash@result) # transform the result file to dataframe
+head(mf_u2_h_nash.df)
+# View(dfGO_sigs.CN)
+
+
+cnetplot(mf_u2_h_nash,showCategory=10)
+
+
+```
+
+```{r}
+goplot(mf_u2_h_nash, geom = 'label')
+```
+
+From SS to NASH
+
+```{r}
+mf_u2_ss_nash <- enrichGO(gene  = rownames(dds_u2_ss_nash), keyType = 'SYMBOL', OrgDb = org.Hs.eg.db, ont = "MF")
+
+# check results
+mf_u2_ss_nash.df <- data.frame(mf_u2_ss_nash@result) # transform the result file to dataframe
+head(mf_u2_ss_nash.df)
+# View(dfGO_sigs.CN)
+
+
+cnetplot(mf_u2_ss_nash,showCategory=10)
+```
+
+# 
